@@ -12,83 +12,236 @@
 
 BACOPA bridges the gap between traditional gaming, tabletop design, and modern machine learning. It is a unified ecosystem where players can face off against human or bot opponents, and designers can instantly test their chaotic new mechanics against intelligent agents.
 
-## **The Technology Stack**
+---
 
-Given the ambitious scope of bridging high-performance machine learning with real-time web interfaces, BACOPA utilizes a decoupled microservice architecture.  
-| **Component** | **Technology** | **Why it's the Best Choice** |  
-|---------------|----------------|------------------------------|
-| **Frontend Framework** | React (Next.js) \+ TypeScript | Next.js handles fast initial loads and complex routing. TypeScript is absolutely mandatory to maintain sanity with unpredictable, dynamic game state objects across a large team. |  
-| **Game Renderer** | PixiJS (2D) / Three.js (3D) | Lightweight, headless-compatible renderers that can dynamically draw boards based on abstract backend JSON states. |  
-| **Platform Backend** | Go | Go is my choice! High concurrency. Manages matchmaking, user profiles, Elo ratings, WebSocket routing, and metadata handling. Also for matchmaking queues, holding active live game session states, and message brokering. |  
-| **Live Inference API** | Python (FastAPI) | Wraps the RLGB engine. Asynchronous, microsecond-latency API to feed game states to ML models and return AI moves instantly. |  
-| **Real-time Comms** | WebSockets (Socket.io) | Essential for real-time multiplayer moves, chat, and live game observation. |  
-| **Relational DB** | SQlite | Robust handling of users, complex ruleset schemas, and the intricate "forking" histories of custom games. |    
-| **MLOps & Infra** | Docker, Kubernetes, Celery | Orchestrates the auto-scaling of GPU pods required to train new agents when a user publishes a new game. |
+## **Current Status: v0.1 — Playable MVP**
+
+The first working version of BACOPA is live with the following features:
+
+### What's Working Now
+- **Two Games:** Tic Tac Toe and Connect Four, fully playable
+- **User Management:** Registration, login, JWT authentication, Elo ratings
+- **Human vs Human:** Real-time multiplayer via WebSocket with in-game chat
+- **Human vs AI:** Minimax AI with alpha-beta pruning at three difficulty levels (Easy, Medium, Hard)
+- **Game Lobby:** Create games, browse open games, join matches
+- **Match History:** Track past games with results and Elo changes
+- **Dark-themed UI:** Modern gaming aesthetic with animations
+
+### Architecture Decisions for v0.1
+| **Component** | **Technology** | **Status** |
+|---|---|---|
+| Frontend | Next.js + TypeScript + Tailwind CSS | Implemented |
+| Backend | Go (gorilla/mux + gorilla/websocket) | Implemented |
+| Database | SQLite (WAL mode) | Implemented |
+| AI Opponents | Minimax with alpha-beta pruning | Implemented |
+| Real-time | WebSockets (native gorilla/websocket) | Implemented |
+| Containerization | Docker + Docker Compose | Configured |
+
+**Key v0.1 decisions:**
+- AI uses classical minimax instead of RLGB — sufficient for simple games, no GPU needed
+- SQLite instead of PostgreSQL — zero-config, suitable for single-server deployment
+- Monolithic Go backend instead of microservices — simpler for two games, will split later
+- No rule editor — games are hardcoded; the compiler layer comes in Phase 3
+
+---
+
+## **Roadmap**
+
+### Phase 1 — Playable MVP ✅ (Current)
+- Two hardcoded games (Tic Tac Toe, Connect Four)
+- User auth, Elo ratings, match history
+- PvP with chat, AI opponents (minimax)
+
+### Phase 2 — Community & Polish
+- Game spectating / live observation
+- Leaderboards and detailed player profiles
+- Game replay system
+- Lobby chat and matchmaking queue
+- More games (Checkers, Reversi, etc.)
+
+### Phase 3 — Rule Editor & Compiler
+- Visual drag-and-drop game editor
+- Universal JSON ruleset schema
+- Compiler layer: JSON → RLGB Python Game class
+- Fuzz testing for user-created rulesets
+
+### Phase 4 — ML Pipeline & RLGB Integration
+- FastAPI inference service wrapping RLGB
+- Auto-training pipeline (Celery + GPU pods)
+- Self-play PPO training for user-created games
+- Model registry and versioning
+
+### Phase 5 — Scale & Production
+- Kubernetes orchestration
+- Redis for session state caching
+- PostgreSQL migration for multi-server deployment
+- CDN and production deployment
+- Rate limiting, abuse prevention
+
+---
+
+## **The Technology Stack (Full Vision)**
+
+| **Component** | **Technology** | **Why** |
+|---|---|---|
+| **Frontend** | Next.js + TypeScript + Tailwind | Fast loads, type safety, modern UI |
+| **Game Renderer** | PixiJS (2D) / Three.js (3D) | Dynamic board rendering from JSON state (Phase 3+) |
+| **Platform Backend** | Go | High concurrency for WebSocket routing, matchmaking, game sessions |
+| **Live Inference API** | Python (FastAPI) | Wraps RLGB engine for real-time AI moves (Phase 4+) |
+| **Real-time** | WebSockets | Multiplayer moves, chat, live observation |
+| **Database** | SQLite → PostgreSQL | SQLite now, PostgreSQL when scaling (Phase 5) |
+| **MLOps** | Docker, Kubernetes, Celery | GPU pod orchestration for auto-training (Phase 4+) |
 
 ## **Core Architecture & Design Requirements**
 
 BACOPA's architecture is split into three highly distinct domains.
 
-### **1\. The Live Arena (State Management & Inference)**
+### **1. The Live Arena (State Management & Inference)**
 
 RLGB's core design dictates that games are stateless and transition functionally (next\_state(state, action)).
 
-* The **Platform Backend** (Node/Go) holds the "ground truth" of any active multiplayer game in Redis.  
-* When it is a Bot's turn, the Platform Backend sends the current state via gRPC/HTTP to the **Inference API** (FastAPI).  
-* FastAPI dynamically loads the corresponding PyTorch model (weights.pt & metadata.json) for that specific game variant, runs agent.act(), and instantly returns the move.
+* The **Platform Backend** (Go) holds the "ground truth" of any active multiplayer game.  
+* When it is a Bot's turn, the Platform Backend either runs local minimax (v0.1) or sends the current state via HTTP to the **Inference API** (FastAPI, Phase 4+).
+* FastAPI dynamically loads the corresponding PyTorch model for that specific game variant, runs agent.act(), and returns the move.
 
-### **2\. The Universal Compiler (The Grand Challenge)**
+### **2. The Universal Compiler (The Grand Challenge)**
 
-Users create games in a visual drag-and-drop web editor. RLGB, however, expects a strict Python Game subclass with explicit mathematical action spaces and perspective-relative observe(state) tensors.
+Users create games in a visual drag-and-drop web editor. RLGB expects a strict Python Game subclass with explicit mathematical action spaces and perspective-relative observe(state) tensors.
 
 * BACOPA must include a **Compiler Layer**.  
-* This layer accepts a universal JSON/YAML schema from the frontend editor and automatically translates it into a valid, immutable RLGB Python class on the fly, bridging visual mechanics with neural network tensor inputs.
+* This layer accepts a universal JSON/YAML schema from the frontend editor and automatically translates it into a valid RLGB Python class, bridging visual mechanics with neural network tensor inputs.
+* **Status:** Not yet started (Phase 3)
 
-### **3\. Asynchronous MLOps (The Training Pipeline)**
+### **3. Asynchronous MLOps (The Training Pipeline)**
 
 When a user invents or forks a game and clicks "Publish":
 
 * A message is sent to a job queue (Celery/RabbitMQ).  
 * Kubernetes spins up a GPU training pod.  
-* The pod executes RLGB's run\_optimize.py, utilizing curriculum learning and league opponent pools to train a baseline bot from scratch via self-play.  
-* Once training yields a competent agent, the model is saved to cloud storage, and the pod spins down. The new game is now "Live" with an AI opponent ready to play.
+* The pod executes RLGB's run\_optimize.py to train a baseline bot via self-play.  
+* Once training yields a competent agent, the model is saved and the game goes "Live" with an AI opponent.
+* **Status:** Not yet started (Phase 4)
+
+---
+
+## **Project Structure**
+
+```
+BACOPA/
+├── backend-platform/       # Go backend server
+│   ├── cmd/server/         # Entry point
+│   ├── internal/
+│   │   ├── ai/             # Minimax AI with alpha-beta pruning
+│   │   ├── auth/           # JWT authentication
+│   │   ├── db/             # SQLite database layer
+│   │   ├── game/           # Game engines (TicTacToe, ConnectFour)
+│   │   ├── handler/        # HTTP & WebSocket handlers
+│   │   └── models/         # Data models
+│   ├── Dockerfile
+│   └── go.mod
+├── frontend/               # Next.js frontend
+│   ├── src/
+│   │   ├── app/            # Pages (login, register, game, dashboard)
+│   │   ├── components/     # UI components (boards, chat, modals)
+│   │   ├── context/        # Auth context
+│   │   ├── hooks/          # WebSocket hook
+│   │   └── lib/            # API client
+│   ├── Dockerfile
+│   └── package.json
+├── RLGB/                   # RLGB engine (git submodule)
+├── docker-compose.yml
+└── README.md
+```
+
+---
 
 ## **Instructions for the Development Team**
 
-To prevent chaos among a the complex development path on such a multi-faceted platform, several areas of development should be addressed in parallel or sequentially:
-
 ### **A. Topic Areas / Responsibilities**
 
-1. **The Platform (Node/Go & DB):** Focuses on the ecosystem. User authentication, Elo rating algorithms, WebSocket routing, game lobby state management, and the PostgreSQL schema for tracking the lineage of forked games.  
-2. **The Compiler (Python):** Handles the hardest translation task. They design the universal JSON Ruleset Schema and build the parser that turns frontend JSON into robust RLGB Game classes.  
-3. **The MLOps & Inference(Python):** Focuses on speed and scale. They wrap RLGB into the ultra-fast FastAPI service for live play and orchestrate the automated GPU training queues in Kubernetes.  
-4. **The Interface & Editor(React & WebGL):** Builds the player dashboards, community features, and the visual drag-and-drop game editor.
+1. **The Platform (Go & DB):** User authentication, Elo rating algorithms, WebSocket routing, game lobby state management, and database schemas.
+2. **The Compiler (Python):** Designs the universal JSON Ruleset Schema and builds the parser that turns frontend JSON into robust RLGB Game classes.
+3. **The MLOps & Inference (Python):** Wraps RLGB into the FastAPI service for live play and orchestrates automated GPU training queues.
+4. **The Interface & Editor (React):** Builds the player dashboards, community features, and the visual drag-and-drop game editor.
 
 ### **B. Development Guidelines**
 
-* **API-First Development:** Before any squad writes logic, OpenAPI/Swagger specs defining exactly how "Game States" and "Ruleset JSONs" are structured must be negotiated and locked.  
-* **Strict Typing & Validation:** Use TypeScript strictly on the frontend/platform backend, and Pydantic models in Python. Dynamic game engines fail catastrophically if data shapes are loose.  
-* **Fuzz Testing:** Because users can *invent* games, the platform is vulnerable to infinite loops or contradictory mechanics. The Compiler Squad must implement intense fuzz testing—throwing random, garbage JSON rulesets at the compiler to ensure it gracefully rejects them without crashing backend services.  
-* **Trunk-Based Development:** Push small, frequent updates to main hidden behind Feature Flags to avoid massive merge conflicts across the microservices.
+* **API-First Development:** OpenAPI/Swagger specs defining game states and ruleset structures must be agreed upon before building.
+* **Strict Typing & Validation:** TypeScript on frontend, strong types in Go, Pydantic in Python.
+* **Fuzz Testing:** The Compiler must handle random/garbage JSON rulesets gracefully.
+* **Trunk-Based Development:** Small, frequent updates to main behind feature flags.
 
-## **License Choice: AGPLv3**
-
-BACOPA is licensed under the **GNU Affero General Public License v3.0**.  
-Because this is an open platform designed for web deployment, the AGPLv3 closes the "Application Service Provider" loophole. It ensures that if any large entity takes the BACOPA codebase, modifies it, and hosts it as a competing web service, they *must* release their modifications back to the open-source community. This guarantees BACOPA remains a truly open ecosystem.
+---
 
 ## **Getting Started (Local Development)**
 
 ### **Prerequisites**
 
-* Docker & Docker Compose (or minikube for Kubernetes simulation)  
-* Node.js (v18+)  
-* Python (v3.10+)
+* Go 1.21+ (with CGO support for SQLite)
+* Node.js 20+
+* Docker & Docker Compose (optional)
 
-### **Setup**
+### **Quick Start**
 
-1. Setup innitial project plan (DONE)
-2. Initialize the RLGB engine submodule (DONE)
-3. Spin up the infrastructure (PostgreSQL, Redis, RabbitMQ): docker-compose up \-d  
-4. Start the Inference API: cd backend-inference && uvicorn main:app \--reload  
-5. Start the Platform Backend: cd backend-platform && npm run start:dev  
-6. Start the Frontend Client: cd frontend && npm run dev
+```bash
+# Clone with submodules
+git clone --recurse-submodules https://github.com/horkah/bacopa.git
+cd bacopa
+
+# Start backend (terminal 1)
+cd backend-platform
+go mod tidy
+go run ./cmd/server/
+
+# Start frontend (terminal 2)
+cd frontend
+npm install
+npm run dev
+```
+
+Open http://localhost:3000 in your browser.
+
+### **Docker Compose**
+
+```bash
+docker-compose up --build
+```
+
+This starts the backend on port 8080 and the frontend on port 3000.
+
+### **Development Workflow**
+
+1. Register an account at http://localhost:3000/register
+2. Choose a game (Tic Tac Toe or Connect Four)
+3. Play vs AI (Easy/Medium/Hard) or create a PvP game
+4. For PvP: share the game link with another player, or have them join from the lobby
+
+---
+
+## **API Reference**
+
+### REST Endpoints
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/api/auth/register` | No | Create account |
+| POST | `/api/auth/login` | No | Login |
+| GET | `/api/auth/me` | Yes | Get current user |
+| GET | `/api/games/types` | No | List available games |
+| POST | `/api/games` | Yes | Create game session |
+| GET | `/api/games/lobby` | Yes | List open PvP games |
+| POST | `/api/games/:id/join` | Yes | Join a PvP game |
+| GET | `/api/games/history` | Yes | Match history |
+
+### WebSocket
+
+Connect to `ws://localhost:8080/ws?token=JWT&gameId=ID`
+
+**Client messages:** `move` (position), `chat` (message)  
+**Server messages:** `game_state`, `chat`, `player_joined`, `game_over`, `error`
+
+---
+
+## **License: AGPLv3**
+
+BACOPA is licensed under the **GNU Affero General Public License v3.0**. The AGPLv3 closes the "Application Service Provider" loophole — if anyone takes the BACOPA codebase, modifies it, and hosts it as a web service, they must release their modifications back to the open-source community.
