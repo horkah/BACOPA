@@ -19,11 +19,10 @@ Given the ambitious scope of bridging high-performance machine learning with rea
 |---------------|----------------|------------------------------|
 | **Frontend Framework** | React (Next.js) \+ TypeScript | Next.js handles fast initial loads and complex routing. TypeScript is absolutely mandatory to maintain sanity with unpredictable, dynamic game state objects across a large team. |  
 | **Game Renderer** | PixiJS (2D) / Three.js (3D) | Lightweight, headless-compatible renderers that can dynamically draw boards based on abstract backend JSON states. |  
-| **Platform Backend** | Node.js (NestJS) or Go | High concurrency. Manages matchmaking, user profiles, Elo ratings, WebSocket routing, and metadata handling. |  
+| **Platform Backend** | Go | Go is my choice! High concurrency. Manages matchmaking, user profiles, Elo ratings, WebSocket routing, and metadata handling. Also for matchmaking queues, holding active live game session states, and message brokering. |  
 | **Live Inference API** | Python (FastAPI) | Wraps the RLGB engine. Asynchronous, microsecond-latency API to feed game states to ML models and return AI moves instantly. |  
 | **Real-time Comms** | WebSockets (Socket.io) | Essential for real-time multiplayer moves, chat, and live game observation. |  
-| **Relational DB** | PostgreSQL | Robust handling of users, complex ruleset schemas, and the intricate "forking" histories of custom games. |  
-| **In-Memory DB** | Redis | Crucial for matchmaking queues, holding active live game session states, and message brokering. |  
+| **Relational DB** | SQlite | Robust handling of users, complex ruleset schemas, and the intricate "forking" histories of custom games. |    
 | **MLOps & Infra** | Docker, Kubernetes, Celery | Orchestrates the auto-scaling of GPU pods required to train new agents when a user publishes a new game. |
 
 ## **Core Architecture & Design Requirements**
