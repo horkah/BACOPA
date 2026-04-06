@@ -16,6 +16,7 @@ BACOPA bridges the gap between traditional gaming, tabletop design, and modern m
 
 Given the ambitious scope of bridging high-performance machine learning with real-time web interfaces, BACOPA utilizes a decoupled microservice architecture.  
 | **Component** | **Technology** | **Why it's the Best Choice** |  
+|---------------|----------------|------------------------------|
 | **Frontend Framework** | React (Next.js) \+ TypeScript | Next.js handles fast initial loads and complex routing. TypeScript is absolutely mandatory to maintain sanity with unpredictable, dynamic game state objects across a large team. |  
 | **Game Renderer** | PixiJS (2D) / Three.js (3D) | Lightweight, headless-compatible renderers that can dynamically draw boards based on abstract backend JSON states. |  
 | **Platform Backend** | Node.js (NestJS) or Go | High concurrency. Manages matchmaking, user profiles, Elo ratings, WebSocket routing, and metadata handling. |  
@@ -55,14 +56,14 @@ When a user invents or forks a game and clicks "Publish":
 
 ## **Instructions for the Development Team**
 
-To prevent chaos among a large programming team working on such a multi-faceted platform, development is divided into four focused "Squads."
+To prevent chaos among a the complex development path on such a multi-faceted platform, several areas of development should be addressed in parallel or sequentially:
 
-### **A. Squad Responsibilities**
+### **A. Topic Areas / Responsibilities**
 
-1. **The Platform Squad (Node/Go & DB):** Focuses on the ecosystem. User authentication, Elo rating algorithms, WebSocket routing, game lobby state management, and the PostgreSQL schema for tracking the lineage of forked games.  
-2. **The Compiler Squad (Python):** Handles the hardest translation task. They design the universal JSON Ruleset Schema and build the parser that turns frontend JSON into robust RLGB Game classes.  
-3. **The MLOps & Inference Squad (Python):** Focuses on speed and scale. They wrap RLGB into the ultra-fast FastAPI service for live play and orchestrate the automated GPU training queues in Kubernetes.  
-4. **The Interface & Editor Squad (React & WebGL):** Builds the player dashboards, community features, and the visual drag-and-drop game editor.
+1. **The Platform (Node/Go & DB):** Focuses on the ecosystem. User authentication, Elo rating algorithms, WebSocket routing, game lobby state management, and the PostgreSQL schema for tracking the lineage of forked games.  
+2. **The Compiler (Python):** Handles the hardest translation task. They design the universal JSON Ruleset Schema and build the parser that turns frontend JSON into robust RLGB Game classes.  
+3. **The MLOps & Inference(Python):** Focuses on speed and scale. They wrap RLGB into the ultra-fast FastAPI service for live play and orchestrate the automated GPU training queues in Kubernetes.  
+4. **The Interface & Editor(React & WebGL):** Builds the player dashboards, community features, and the visual drag-and-drop game editor.
 
 ### **B. Development Guidelines**
 
@@ -86,8 +87,8 @@ Because this is an open platform designed for web deployment, the AGPLv3 closes 
 
 ### **Setup**
 
-1. Clone the repository: git clone https://github.com/your-org/bacopa.git  
-2. Initialize the RLGB engine submodule: git submodule update \--init \--recursive  
+1. Setup innitial project plan (DONE)
+2. Initialize the RLGB engine submodule (DONE)
 3. Spin up the infrastructure (PostgreSQL, Redis, RabbitMQ): docker-compose up \-d  
 4. Start the Inference API: cd backend-inference && uvicorn main:app \--reload  
 5. Start the Platform Backend: cd backend-platform && npm run start:dev  
