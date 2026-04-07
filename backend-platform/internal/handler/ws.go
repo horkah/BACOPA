@@ -10,11 +10,10 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/horkah/bacopa/backend-platform/internal/ai"
 	"github.com/horkah/bacopa/backend-platform/internal/auth"
 	"github.com/horkah/bacopa/backend-platform/internal/db"
-	"github.com/horkah/bacopa/backend-platform/internal/game"
 	"github.com/horkah/bacopa/backend-platform/internal/models"
+	"github.com/horkah/bacopa/backend-platform/internal/rlgb"
 )
 
 var upgrader = websocket.Upgrader{
@@ -41,24 +40,32 @@ func (p *PlayerConn) SendJSON(v interface{}) error {
 }
 
 type GameRoom struct {
-	mu       sync.RWMutex
-	GameID   string
-	GameType string
-	Mode     string
-	Engine   game.GameEngine
-	Board    interface{}
-	Status   string
-	Current  int // 1 or 2
-	Winner   int
-	LastMove interface{}
-	Players  [2]*PlayerConn // index 0 = player1, index 1 = player2
-	AIDiff   string
+	mu         sync.RWMutex
+	GameID     string
+	GameType   string
+	Mode       string
+	State      json.RawMessage   // Opaque RLGB state
+	Display    rlgb.DisplayState // Last display state from RLGB
+	Status     string
+	Winner     int
+	LastMove   interface{}
+	Players    [2]*PlayerConn
+	AIDiff     string
+	RLGBClient *rlgb.Client
 }
 
 var (
 	rooms   = make(map[string]*GameRoom)
 	roomsMu sync.RWMutex
 )
+
+// rlgbClient is the shared RLGB client, set by SetRLGBClient from main.
+var rlgbClientRef *rlgb.Client
+
+// SetRLGBClient stores the shared RLGB client for room creation.
+func SetRLGBClient(c *rlgb.Client) {
+	rlgbClientRef = c
+}
 
 func getOrCreateRoom(gameID string) (*GameRoom, error) {
 	roomsMu.Lock()
@@ -73,24 +80,30 @@ func getOrCreateRoom(gameID string) (*GameRoom, error) {
 		return nil, err
 	}
 
-	engine := game.GetEngine(gs.GameType)
-	if engine == nil {
+	// The DB board column stores the opaque RLGB state JSON.
+	// We also need a display state; for a room loaded from DB we need to
+	// reconstruct it. We call RLGB move with no action to get display,
+	// but since RLGB doesn't have such an endpoint, we store both state
+	// and display in the DB board column as a wrapper object.
+	var stored struct {
+		State   json.RawMessage   `json:"state"`
+		Display rlgb.DisplayState `json:"display"`
+	}
+	if err := json.Unmarshal(gs.Board, &stored); err != nil {
 		return nil, err
 	}
 
-	board := engine.DeserializeBoard(gs.Board)
-
 	room := &GameRoom{
-		GameID:   gameID,
-		GameType: gs.GameType,
-		Mode:     gs.Mode,
-		Engine:   engine,
-		Board:    board,
-		Status:   gs.Status,
-		Current:  gs.CurrentPlayer,
-		Winner:   gs.Winner,
-		LastMove: nil,
-		AIDiff:   gs.AIDifficulty,
+		GameID:     gameID,
+		GameType:   gs.GameType,
+		Mode:       gs.Mode,
+		State:      stored.State,
+		Display:    stored.Display,
+		Status:     gs.Status,
+		Winner:     gs.Winner,
+		LastMove:   nil,
+		AIDiff:     gs.AIDifficulty,
+		RLGBClient: rlgbClientRef,
 	}
 
 	rooms[gameID] = room
@@ -227,13 +240,9 @@ func buildGameState(room *GameRoom) models.GameStateData {
 		winner = room.Winner
 	}
 
-	serialized := room.Engine.SerializeBoard(room.Board)
-	var boardData interface{}
-	json.Unmarshal(serialized, &boardData)
-
 	return models.GameStateData{
-		Board:         boardData,
-		CurrentPlayer: room.Current,
+		Board:         room.Display.Board,
+		CurrentPlayer: room.Display.CurrentPlayer,
 		Status:        room.Status,
 		Winner:        winner,
 		Players:       players,
@@ -332,7 +341,7 @@ func handleMove(room *GameRoom, pc *PlayerConn, data json.RawMessage) {
 		return
 	}
 
-	if room.Current != pc.PlayerNumber {
+	if room.Display.CurrentPlayer != pc.PlayerNumber {
 		room.mu.Unlock()
 		pc.SendJSON(models.WSResponse{
 			Type: "error",
@@ -341,7 +350,18 @@ func handleMove(room *GameRoom, pc *PlayerConn, data json.RawMessage) {
 		return
 	}
 
-	if !room.Engine.ValidateMove(room.Board, pc.PlayerNumber, moveData.Position) {
+	// Delegate move to RLGB
+	moveResp, err := room.RLGBClient.MakeMove(room.GameType, room.State, moveData.Position)
+	if err != nil {
+		room.mu.Unlock()
+		pc.SendJSON(models.WSResponse{
+			Type: "error",
+			Data: models.ErrorData{Message: "Game service unavailable"},
+		})
+		return
+	}
+
+	if !moveResp.Valid {
 		room.mu.Unlock()
 		pc.SendJSON(models.WSResponse{
 			Type: "error",
@@ -350,26 +370,24 @@ func handleMove(room *GameRoom, pc *PlayerConn, data json.RawMessage) {
 		return
 	}
 
-	// Apply move
-	room.Board = room.Engine.ApplyMove(room.Board, pc.PlayerNumber, moveData.Position)
+	// Update room state from RLGB response
+	room.State = moveResp.State
+	room.Display = moveResp.Display
 	room.LastMove = moveData.Position
 
-	// Check win/draw
+	// Check terminal conditions
 	gameOver := false
-	won, winner := room.Engine.CheckWin(room.Board)
-	if won {
-		room.Status = "won"
-		room.Winner = winner
+	if moveResp.Display.IsTerminal {
+		if moveResp.Display.IsDraw {
+			room.Status = "draw"
+			room.Winner = 0
+		} else if moveResp.Display.Winner != nil {
+			room.Status = "won"
+			room.Winner = *moveResp.Display.Winner
+		}
 		gameOver = true
-	} else if room.Engine.CheckDraw(room.Board) {
-		room.Status = "draw"
-		room.Winner = 0
-		gameOver = true
-	} else {
-		room.Current = 3 - room.Current
 	}
 
-	// Save to DB
 	persistGame(room)
 	room.mu.Unlock()
 
@@ -382,7 +400,7 @@ func handleMove(room *GameRoom, pc *PlayerConn, data json.RawMessage) {
 
 	// If AI mode and it's AI's turn
 	room.mu.RLock()
-	isAI := room.Mode == "ai" && room.Current == 2 && room.Status == "playing"
+	isAI := room.Mode == "ai" && room.Display.CurrentPlayer == 2 && room.Status == "playing"
 	room.mu.RUnlock()
 
 	if isAI {
@@ -393,27 +411,27 @@ func handleMove(room *GameRoom, pc *PlayerConn, data json.RawMessage) {
 func handleAIMove(room *GameRoom) {
 	room.mu.Lock()
 
-	aiMove := ai.GetAIMove(room.Engine, room.Board, 2, room.AIDiff)
-	if aiMove < 0 {
+	aiResp, err := room.RLGBClient.AIMove(room.GameType, room.State, room.AIDiff)
+	if err != nil {
 		room.mu.Unlock()
+		log.Printf("RLGB AI move error: %v", err)
 		return
 	}
 
-	room.Board = room.Engine.ApplyMove(room.Board, 2, aiMove)
-	room.LastMove = aiMove
+	room.State = aiResp.State
+	room.Display = aiResp.Display
+	room.LastMove = aiResp.Action
 
 	gameOver := false
-	won, winner := room.Engine.CheckWin(room.Board)
-	if won {
-		room.Status = "won"
-		room.Winner = winner
+	if aiResp.Display.IsTerminal {
+		if aiResp.Display.IsDraw {
+			room.Status = "draw"
+			room.Winner = 0
+		} else if aiResp.Display.Winner != nil {
+			room.Status = "won"
+			room.Winner = *aiResp.Display.Winner
+		}
 		gameOver = true
-	} else if room.Engine.CheckDraw(room.Board) {
-		room.Status = "draw"
-		room.Winner = 0
-		gameOver = true
-	} else {
-		room.Current = 1
 	}
 
 	persistGame(room)
@@ -427,12 +445,19 @@ func handleAIMove(room *GameRoom) {
 }
 
 func persistGame(room *GameRoom) {
-	boardJSON := room.Engine.SerializeBoard(room.Board)
+	// Store both state and display as a wrapper in the board column
+	wrapper, _ := json.Marshal(map[string]interface{}{
+		"state":   json.RawMessage(room.State),
+		"display": room.Display,
+	})
+
+	currentPlayer := room.Display.CurrentPlayer
+
 	gs := &models.GameSession{
 		ID:            room.GameID,
 		Status:        room.Status,
-		Board:         boardJSON,
-		CurrentPlayer: room.Current,
+		Board:         json.RawMessage(wrapper),
+		CurrentPlayer: currentPlayer,
 		Winner:        room.Winner,
 	}
 

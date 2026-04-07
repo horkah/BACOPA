@@ -13,6 +13,7 @@ import (
 
 	"github.com/horkah/bacopa/backend-platform/internal/db"
 	"github.com/horkah/bacopa/backend-platform/internal/handler"
+	"github.com/horkah/bacopa/backend-platform/internal/rlgb"
 )
 
 func main() {
@@ -24,6 +25,23 @@ func main() {
 	if err := db.Initialize(dbPath); err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
+
+	// Create RLGB client and perform health check with retries
+	rlgbClient := rlgb.NewClient()
+	for i := 0; i < 10; i++ {
+		if err := rlgbClient.Health(); err != nil {
+			log.Printf("RLGB health check attempt %d/10 failed: %v", i+1, err)
+			if i < 9 {
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			log.Printf("WARNING: RLGB service not reachable after 10 attempts, starting anyway")
+		} else {
+			log.Println("RLGB service is healthy")
+			break
+		}
+	}
+	handler.SetRLGBClient(rlgbClient)
 
 	r := mux.NewRouter()
 

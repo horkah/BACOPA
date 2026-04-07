@@ -1,6 +1,14 @@
 version: "3.8"
 
 services:
+  rlgb:
+    build:
+      context: ./RLGB
+      dockerfile: Dockerfile
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend-platform
@@ -10,8 +18,11 @@ services:
     environment:
       - JWT_SECRET=bacopa-dev-secret
       - DB_PATH=/data/bacopa.db
+      - RLGB_URL=http://rlgb:9090
     volumes:
       - bacopa-data:/data
+    depends_on:
+      - rlgb
     restart: unless-stopped
 
   frontend:

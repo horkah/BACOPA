@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 
@@ -12,7 +13,6 @@ import (
 
 	"github.com/horkah/bacopa/backend-platform/internal/auth"
 	"github.com/horkah/bacopa/backend-platform/internal/db"
-	"github.com/horkah/bacopa/backend-platform/internal/game"
 	"github.com/horkah/bacopa/backend-platform/internal/models"
 )
 
@@ -52,21 +52,25 @@ func generateGameID() string {
 }
 
 func GetGameTypes(w http.ResponseWriter, r *http.Request) {
-	types := []models.GameTypeInfo{
-		{
-			ID:          "tictactoe",
-			Name:        "Tic Tac Toe",
-			Description: "Classic 3x3 grid game. Get three in a row to win!",
-			MinPlayers:  2,
-			MaxPlayers:  2,
-		},
-		{
-			ID:          "connectfour",
-			Name:        "Connect Four",
-			Description: "Drop discs into a 7-column grid. Connect four in a row to win!",
-			MinPlayers:  2,
-			MaxPlayers:  2,
-		},
+	if rlgbClientRef == nil {
+		jsonError(w, "Game service not configured", http.StatusServiceUnavailable)
+		return
+	}
+	games, err := rlgbClientRef.ListGames()
+	if err != nil {
+		log.Printf("RLGB ListGames error: %v", err)
+		jsonError(w, "Game service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	types := make([]models.GameTypeInfo, len(games))
+	for i, g := range games {
+		types[i] = models.GameTypeInfo{
+			ID:          g.ID,
+			Name:        g.Name,
+			Description: g.Description,
+			MinPlayers:  g.NumPlayers,
+			MaxPlayers:  g.NumPlayers,
+		}
 	}
 	jsonResponse(w, http.StatusOK, types)
 }
@@ -84,11 +88,6 @@ func CreateGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.GameType != "tictactoe" && req.GameType != "connectfour" {
-		jsonError(w, "Invalid game type", http.StatusBadRequest)
-		return
-	}
-
 	if req.Mode != "pvp" && req.Mode != "ai" {
 		jsonError(w, "Invalid mode, must be 'pvp' or 'ai'", http.StatusBadRequest)
 		return
@@ -98,9 +97,24 @@ func CreateGame(w http.ResponseWriter, r *http.Request) {
 		req.AIDifficulty = "medium"
 	}
 
-	engine := game.GetEngine(req.GameType)
-	board := engine.NewBoard()
-	boardJSON := engine.SerializeBoard(board)
+	if rlgbClientRef == nil {
+		jsonError(w, "Game service not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Create new game via RLGB
+	newGameResp, err := rlgbClientRef.NewGame(req.GameType)
+	if err != nil {
+		log.Printf("RLGB NewGame error: %v", err)
+		jsonError(w, "Game service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Store both state and display as a wrapper in the board column
+	boardJSON, _ := json.Marshal(map[string]interface{}{
+		"state":   json.RawMessage(newGameResp.State),
+		"display": newGameResp.Display,
+	})
 
 	user, err := db.GetUserByID(userID)
 	if err != nil {
